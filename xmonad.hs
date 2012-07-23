@@ -13,6 +13,8 @@ import XMonad.Layout.Grid
 import XMonad.ManageHook
 import XMonad.Prompt
 import XMonad.Util.EZConfig
+import qualified XMonad.StackSet as W
+
 
 main = withConnection Session $ \ dbus -> do
   getWellKnownName dbus
@@ -26,9 +28,14 @@ main = withConnection Session $ \ dbus -> do
   , modMask            = mod4Mask
   , terminal           = "gnome-terminal"
   }
+    -- swap w & e in screen selection as this computer is reversed
+    `additionalKeys`     [((m .|. mod4Mask, key), screenWorkspace sc >>= flip whenJust (windows . f))
+                            | (key, sc) <- zip [xK_e, xK_w, xK_r] [0..]
+                            , (f, m) <- [(W.view, 0), (W.shift, shiftMask)]]
     -- `removeKeysP`     ["M-p"]
-    `additionalKeysP` [("M-m",spawn "emacsclient -c -a '' ")
+    `additionalKeysP` [("M-m",spawn "/home/anbate/remacs.sh")
                       ,("M-i",spawn "google-chrome")
+                      ,("M-t",spawn "icedove")
                       ]
 
 
