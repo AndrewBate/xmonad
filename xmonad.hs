@@ -1,29 +1,26 @@
-import Control.OldException(catchDyn,try)
-import XMonad.Util.Run
-import Control.Concurrent
-import DBus
-import DBus.Connection
-import DBus.Message
-import System.Cmd
-import XMonad
+
+import qualified DBus as D
+import qualified DBus.Client as D
+import qualified Codec.Binary.UTF8.String as UTF8
+import XMonad hiding (Connection)
 import XMonad.Config.Gnome
 import XMonad.Hooks.DynamicLog
 import XMonad.Layout.Accordion
 import XMonad.Layout.Grid
-import XMonad.ManageHook
-import XMonad.Prompt
 import XMonad.Util.EZConfig
 import qualified XMonad.StackSet as W
 
 
-main = withConnection Session $ \ dbus -> do
+main :: IO ()
+main = do 
+  dbus <- D.connectSession
   getWellKnownName dbus
+  spawn "gnome-panel"
   xmonad $ gnomeConfig {
     focusedBorderColor = "DarkBlue"
   , borderWidth        = 3
   , manageHook         = manageHook gnomeConfig <+> composeAll managementHooks
   , logHook            = dynamicLogWithPP (myPrettyPrinter dbus)
-  , startupHook        = startupHook gnomeConfig >> liftIO startNitrogen
   , layoutHook         = layoutHook gnomeConfig ||| Accordion ||| Grid
   , modMask            = mod4Mask
   , terminal           = "gnome-terminal"
@@ -32,21 +29,23 @@ main = withConnection Session $ \ dbus -> do
     `additionalKeys`     [((m .|. mod4Mask, key), screenWorkspace sc >>= flip whenJust (windows . f))
                             | (key, sc) <- zip [xK_e, xK_w, xK_r] [0..]
                             , (f, m) <- [(W.view, 0), (W.shift, shiftMask)]]
-    -- `removeKeysP`     ["M-p"]
     `additionalKeysP` [("M-m",spawn "/home/anbate/remacs.sh")
-                      ,("M-i",spawn "google-chrome")
-                      ,("M-t",spawn "icedove")
+                      ,("M-i", spawn "google-chrome")
+                      ,("M-f", spawn "nautilus")
+                      ,("M-n", spawn "thunderbird")
+                      ,("M-o", spawn "xrandr -o left")
                       ]
+
 
 
 -- -----------------------------------------------------------------------------
 
-myPrettyPrinter :: Connection -> PP
+myPrettyPrinter :: D.Client -> PP
 myPrettyPrinter dbus = defaultPP {
-    ppOutput  = outputThroughDBus dbus
-  , ppTitle   = pangoColor "#003366" . shorten 50 . pangoSanitize
-  , ppCurrent = pangoColor "#006666" . wrap "[" "]" . pangoSanitize
-  , ppVisible = pangoColor "#663366" . wrap "(" ")" . pangoSanitize
+    ppOutput  = dbusOutput dbus
+  , ppTitle   = pangoColor "yellow" . shorten 50 . pangoSanitize
+  , ppCurrent = pangoColor "red" . wrap "[" "]" . pangoSanitize
+  , ppVisible = pangoColor "green" . wrap "(" ")" . pangoSanitize
   , ppHidden  = wrap " " " "
   , ppUrgent  = pangoColor "red"
   }
@@ -59,58 +58,32 @@ managementHooks = [
 
 -- -----------------------------------------------------------------------------
 
-data RDesk = RDesk
-
-instance XPrompt RDesk where
-  showXPrompt     RDesk = "Remote desktop to:"
-  commandToComplete _ c = c
-  nextCompletion      _ = getNextCompletion
-
-runRDeskPrompt :: XPConfig -> X ()
-runRDeskPrompt c = mkXPrompt RDesk c (mkComplFunFromList targs) run
- where
-  targs = ["pane.galois.com","porthole.galois.com"]
-  run s = spawn ("/usr/bin/rdesktop -u GALOIS\\\\awick -g 1250x750 " ++ s)
-
--- This retry is really awkward, but sometimes DBus won't let us get our
--- name unless we retry a couple times.
-getWellKnownName :: Connection -> IO ()
-getWellKnownName dbus = tryGetName `catchDyn` (\ (DBus.Error _ _) ->
-                                                getWellKnownName dbus)
- where
-  tryGetName = do
-    namereq <- newMethodCall serviceDBus pathDBus interfaceDBus "RequestName"
-    addArgs namereq [String "org.xmonad.Log", Word32 5]
-    sendWithReplyAndBlock dbus namereq 0
-    return ()
-
-outputThroughDBus :: Connection -> String -> IO ()
-outputThroughDBus dbus str = do
-  let str' = "<span font=\"Terminus 9 Bold\">" ++ str ++ "</span>"
-  msg <- newSignal "/org/xmonad/Log" "org.xmonad.Log" "Update"
-  addArgs msg [String str']
-  send dbus msg 0 `catchDyn` (\ (DBus.Error _ _ ) -> return 0)
+getWellKnownName :: D.Client -> IO ()
+getWellKnownName dbus = do
+  D.requestName dbus (D.busName_ "org.xmonad.Log")
+                [D.nameAllowReplacement, D.nameReplaceExisting, D.nameDoNotQueue]
   return ()
+  
+dbusOutput :: D.Client -> String -> IO ()
+dbusOutput dbus str = do
+    let signal = (D.signal (D.objectPath_ "/org/xmonad/Log") (D.interfaceName_ "org.xmonad.Log") (D.memberName_ "Update")) {
+            D.signalBody = [D.toVariant ("<b>" ++ (UTF8.decodeString str) ++ "</b>")]
+        }
+    D.emit dbus signal
 
 pangoColor :: String -> String -> String
 pangoColor fg = wrap left right
- where
-  left  = "<span foreground=\"" ++ fg ++ "\">"
-  right = "</span>"
+  where
+    left  = "<span foreground=\"" ++ fg ++ "\">"
+    right = "</span>"
 
 pangoSanitize :: String -> String
 pangoSanitize = foldr sanitize ""
- where
-  sanitize '>'  acc = "&gt;" ++ acc
-  sanitize '<'  acc = "&lt;" ++ acc
-  sanitize '\"' acc = "&quot;" ++ acc
-  sanitize '&'  acc = "&amp;" ++ acc
-  sanitize x    acc = x:acc
+  where
+    sanitize '>'  xs = "&gt;" ++ xs
+    sanitize '<'  xs = "&lt;" ++ xs
+    sanitize '\"' xs = "&quot;" ++ xs
+    sanitize '&'  xs = "&amp;" ++ xs
+    sanitize x    xs = x:xs
 
-startNitrogen :: IO ()
-startNitrogen = do
-  threadDelay (5 * 1000 * 1000)
-  try_ $ rawSystem "nitrogen" ["--restore"]
 
-try_ :: MonadIO m => IO a -> m ()
-try_ action = liftIO $ try action >> return ()
