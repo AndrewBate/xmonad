@@ -15,6 +15,7 @@ main :: IO ()
 main = do 
   dbus <- D.connectSession
   getWellKnownName dbus
+  spawn "gnome-settings-daemon"
   spawn "gnome-panel"
   xmonad $ gnomeConfig {
     focusedBorderColor = "DarkBlue"
