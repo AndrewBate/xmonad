@@ -13,6 +13,7 @@ main :: IO ()
 main = do 
   dbus <- D.connectSession
   getWellKnownName dbus
+  spawn "gnome-panel"
   xmonad $ gnomeConfig {
     focusedBorderColor = "DarkBlue"
   , borderWidth        = 3
@@ -21,8 +22,11 @@ main = do
   , layoutHook         = layoutHook gnomeConfig ||| Accordion ||| Grid
   , modMask            = mod4Mask
   , terminal           = "gnome-terminal"
-  } `additionalKeysP` [("M-m",spawn "emacsclient -c -a '' ")
-                      ,("M-i",spawn "google-chrome")
+  } `additionalKeysP` [("M-m", spawn "emacsclient -c -a '' ")
+                      ,("M-i", spawn "google-chrome")
+                      ,("M-f", spawn "nautilus")
+                      ,("M-n", spawn "thunderbird")
+                      ,("M-o", spawn "xrandr -o left")
                       ]
 
 
